@@ -1,0 +1,59 @@
+name: Terraform Destroy (Manual)
+
+permissions:
+  id-token: write
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy (e.g. dev, staging, prod)"
+        required: true
+        default: dev
+
+jobs:
+  destroy:
+    name: Destroy - Terraform
+    runs-on: ubuntu-latest
+
+    container:
+      image: hashicorp/terraform:1.13.4
+
+    env:
+      AWS_REGION: us-east-1
+      AWS_ACCOUNT_ID: "061039770549"
+      AWS_ROLE_NAME: terraform-ci-role
+
+      # if environment == main → prod, otherwise use provided environment
+      ENVIRONMENT: ${{ github.event.inputs.environment == 'main' && 'prod' || github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js (for GitHub Actions runtime)
+        run: |
+          apk add --no-cache nodejs npm
+          node --version
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v5.1.0
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.AWS_ROLE_NAME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform   # Only needed if the client replaces the container
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.4
+
+      - name: Terraform Init
+        run: |
+          cd envs/${{ env.ENVIRONMENT }}
+          terraform init -input=false -reconfigure
+
+      - name: Terraform Destroy
+        run: |
+          cd envs/${{ env.ENVIRONMENT }}
+          terraform plan -destroy -out=tfplan-destroy
+          terraform apply -auto-approve "tfplan-destroy"
